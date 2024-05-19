@@ -1,0 +1,107 @@
+import pandas as pd
+
+# Load the datasets
+matches = pd.read_csv('matches.csv')
+deliveries = pd.read_csv('deliveries.csv')
+
+# Calculate runs scored by each team
+team_runs = deliveries.groupby(['match_id', 'batting_team'])['total_runs'].sum().reset_index()
+
+# Calculate wickets taken by each team
+wickets = deliveries[deliveries['dismissal_kind'].notna()]
+team_wickets = wickets.groupby(['match_id', 'bowling_team']).size().reset_index(name='wickets')
+
+# Merge the calculated runs and wickets into the matches dataframe for team1
+team_performance = matches.merge(team_runs, left_on=['id', 'team1'], right_on=['match_id', 'batting_team'], how='left')
+team_performance = team_performance.merge(team_wickets, left_on=['id', 'team2'], right_on=['match_id', 'bowling_team'], how='left', suffixes=('_team1', '_team2'))
+
+# Debug: Check columns after the first set of merges
+print("Columns after first set of merges:", team_performance.columns)
+print(team_performance[['id', 'team1', 'team2', 'total_runs', 'wickets']].head())
+
+# Rename the columns to avoid conflicts
+team_performance.rename(columns={'total_runs': 'runs_scored_by_team1', 'wickets': 'wickets_taken_by_team2'}, inplace=True)
+team_performance['runs_scored_by_team1'].fillna(0, inplace=True)
+team_performance['wickets_taken_by_team2'].fillna(0, inplace=True)
+
+# Debug: Check columns after renaming
+print("Columns after renaming:", team_performance.columns)
+print(team_performance[['runs_scored_by_team1', 'wickets_taken_by_team2']].head())
+
+# Repeat the process for the second team
+team_performance = team_performance.merge(team_runs, left_on=['id', 'team2'], right_on=['match_id', 'batting_team'], how='left', suffixes=('', '_team2_runs'))
+team_performance = team_performance.merge(team_wickets, left_on=['id', 'team1'], right_on=['match_id', 'bowling_team'], how='left', suffixes=('', '_team1_wickets'))
+
+# Debug: Check columns after the second set of merges
+print("Columns after second set of merges:", team_performance.columns)
+print(team_performance[['id', 'team2', 'total_runs', 'wickets']].head())
+
+# Rename the columns to avoid conflicts
+team_performance.rename(columns={'total_runs': 'runs_scored_by_team2', 'wickets': 'wickets_taken_by_team1'}, inplace=True)
+team_performance['runs_scored_by_team2'].fillna(0, inplace=True)
+team_performance['wickets_taken_by_team1'].fillna(0, inplace=True)
+
+# Debug: Check columns after final renaming
+print("Columns after final renaming:", team_performance.columns)
+print(team_performance[['runs_scored_by_team2', 'wickets_taken_by_team1']].head())
+
+# Calculate factors such as win margin, toss win, etc.
+team_performance['win_margin'] = team_performance['win_by_runs'] + team_performance['win_by_wickets']
+
+# Display the updated dataframe
+print(team_performance[['id', 'team1', 'team2', 'runs_scored_by_team1', 'wickets_taken_by_team2', 'runs_scored_by_team2', 'wickets_taken_by_team1', 'win_margin']].head())
+
+#creating dashboards
+
+import dash
+from dash import dcc, html
+from dash.dependencies import Input, Output
+import plotly.express as px
+
+app = dash.Dash(__name__)
+
+# Layout of the dashboard
+app.layout = html.Div([
+    html.H1('IPL Analysis Dashboard'),
+    
+    html.Div([
+        dcc.Dropdown(
+            id='batsman-dropdown',
+            options=[{'label': batsman, 'value': batsman} for batsman in deliveries_df['batsman'].unique()],
+            value='V Kohli',
+            placeholder="Select a Batsman"
+        )
+    ]),
+    
+    dcc.Graph(id='batsman-performance'),
+
+    dcc.Graph(id='team-performance')
+])
+
+# Callback to update batsman performance graph
+@app.callback(
+    Output('batsman-performance', 'figure'),
+    [Input('batsman-dropdown', 'value')]
+)
+def update_batsman_performance(selected_batsman):
+    filtered_df = deliveries_df[deliveries_df['batsman'] == selected_batsman]
+    batsman_team_runs = filtered_df.groupby('batting_team')['batsman_runs'].sum().reset_index()
+    
+    fig = px.bar(batsman_team_runs, x='batting_team', y='batsman_runs',
+                 labels={'batting_team': 'Team', 'batsman_runs': 'Runs'},
+                 title=f'Runs Scored by {selected_batsman} for Each Team')
+    return fig
+
+# Callback to update team performance graph
+@app.callback(
+    Output('team-performance', 'figure'),
+    [Input('batsman-dropdown', 'value')]
+)
+def update_team_performance(selected_batsman):
+    fig = px.bar(team_performance, x='team1', y='win_margin',
+                 labels={'team1': 'Team', 'win_margin': 'Win Margin'},
+                 title='Team Performance by Win Margin')
+    return fig
+
+if __name__ == '__main__':
+    app.run_server(debug=True)
